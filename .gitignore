@@ -1,0 +1,6 @@
+configs/config.json
+dist
+alert.db
+.env
+kleinanzeigen-alert
+kleinanzeigen-alert copy

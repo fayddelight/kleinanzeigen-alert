@@ -1,0 +1,11 @@
+services:
+  kleinanzeigen-alert:
+    build: .
+    container_name: kleinanzeigen-alert
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_APITOKEN=${TELEGRAM_APITOKEN}
+    volumes:
+      - ka-alert-db:/tmp
+volumes:
+  ka-alert-db:
