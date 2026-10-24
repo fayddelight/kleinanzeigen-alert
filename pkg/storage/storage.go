@@ -2,7 +2,7 @@ package storage
 
 import (
 	"errors"
-	"time"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 
@@ -90,8 +90,16 @@ func (s *Storage) AddNewQuery(term string, city string, radius int, price *int, 
 }
 
 func (s *Storage) AddNewQueryViaLink(link string, chatID int64) (*model.Query, error) {
+	link = strings.TrimSpace(link)
 	if link == "" || !scraper.CheckUrl(link) {
 		return nil, errors.New("invalid link")
+	}
+
+	// Re-adding a link this chat already watches returns the existing query
+	// instead of a duplicate that would send every ad twice.
+	existing := model.Query{}
+	if s.db.Where("chat_id = ? AND custom_link = ?", chatID, link).First(&existing).Error == nil {
+		return &existing, nil
 	}
 
 	query := model.Query{ChatID: chatID, CustomLink: &link}
@@ -211,15 +219,6 @@ func (s *Storage) GetLatest(id uint) ([]scraper.Ad, error) {
 
 	s.storeLatestAds(diff, q.ID)
 	return diff, nil
-}
-
-// DeleteOlderAds deletes all ads older that 7 days
-func (s *Storage) DeleteOlderAds() (int64, error) {
-	trx := s.db.Where("created_at < ?", time.Now().AddDate(0, 0, -7)).Delete(model.Ad{})
-	if trx.Error != nil {
-		return 0, trx.Error
-	}
-	return trx.RowsAffected, nil
 }
 
 func (s *Storage) storeLatestAds(ads []scraper.Ad, qID uint) error {

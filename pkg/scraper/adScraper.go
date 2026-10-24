@@ -44,15 +44,18 @@ func GetAds(page int, term string, cityCode int, radius int, maxPrice *int, minP
 		colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
 	)
 
+	// Markup as of the Oct 2026 redesign: each result is
+	// li > article[data-adid][data-href]; top ads carry an svg "TOP" badge
+	// as a direct child of the li (and are repeated further down as normal ads).
 	c.OnHTML("#srchrslt-adtable", func(adListEl *colly.HTMLElement) {
-		adListEl.ForEach(".ad-listitem", func(_ int, e *colly.HTMLElement) {
-			if !strings.Contains(e.DOM.Nodes[0].Attr[0].Val, "is-topad") {
-				link := e.DOM.Find("a[class=ellipsis]")
-				linkURL, _ := link.Attr("href")
-				price := strings.TrimSpace(e.DOM.Find("p[class=aditem-main--middle--price-shipping--price]").Text())
+		adListEl.ForEach("li", func(_ int, e *colly.HTMLElement) {
+			if e.DOM.ChildrenFiltered("svg").Length() == 0 {
+				article := e.DOM.Find("article[data-adid]")
+				linkURL, _ := article.Attr("data-href")
+				price := strings.TrimSpace(article.Find("p.text-title3").First().Text())
 
 				space := regexp.MustCompile(`\s+`)
-				location := strings.TrimSpace(e.DOM.Find("div [class=aditem-main--top--left]").Last().Text())
+				location := strings.TrimSpace(article.Find("[data-title=locationOutline] + span").Text())
 
 				location = space.ReplaceAllString(location, " ")
 
@@ -81,9 +84,8 @@ func GetAds(page int, term string, cityCode int, radius int, maxPrice *int, minP
 					}
 				}
 
-				id, idExsits := e.DOM.Find("article[class=aditem]").Attr("data-adid")
-				//details := e.DOM.Find("div[class=aditem-details]")
-				title := link.Text()
+				id, idExsits := article.Attr("data-adid")
+				title := strings.TrimSpace(article.Find("h3 a").Text())
 				if idExsits {
 					ad := Ad{Title: title, Link: "https://www.kleinanzeigen.de" + linkURL, ID: id, Price: price, Location: location}
 					ads = append(ads, ad)
@@ -187,7 +189,9 @@ func FindCityID(untrimmed string) (int, string, error) {
 func CheckUrl(untrimmed string) bool {
 	url := strings.Trim(untrimmed, " ")
 
-	var urlRegex = regexp.MustCompile(`https://www.kleinanzeigen.de/s-[^? ]+`)
+	// Anchored so a multi-line message (several /link commands pasted at
+	// once) is rejected instead of stored as one garbage link.
+	var urlRegex = regexp.MustCompile(`^https://www\.kleinanzeigen\.de/s-\S+$`)
 
 	return urlRegex.Match([]byte(url))
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"github.com/danielstefank/kleinanzeigen-alert/pkg/model"
 	"github.com/danielstefank/kleinanzeigen-alert/pkg/storage"
 	"github.com/danielstefank/kleinanzeigen-alert/pkg/telegram"
 )
@@ -48,22 +49,11 @@ func main() {
 	bot.Init()
 	go bot.Start()
 
-	cleanupTicker := time.NewTicker(time.Hour)
-
-	go func() {
-		for {
-			<-cleanupTicker.C
-			log.Info().Msg("Removing old ads.")
-			deleted, err := s.DeleteOlderAds()
-
-			if err != nil {
-				log.Error().Err(err).Msg("could not delete old ads")
-				return
-			}
-
-			log.Info().Int64("affected_ads", deleted).Msg("Old ads removed. Sleeping for 1 hour.")
-		}
-	}()
+	// Seen ads are kept forever on purpose: pruning them (it used to drop ads
+	// older than 7 days) re-alerted every ad still on page 1 a week later,
+	// including old ads the seller bumped back to the top.
+	// ponytail: ads table grows by only genuinely new ads (~tens/day); add a
+	// prune of ads unseen for months if it ever gets big.
 
 	for {
 		queries := s.GetQueries()
@@ -72,13 +62,11 @@ func main() {
 		for _, query := range queries {
 			new, err := s.GetLatest(query.ID)
 
+			// Failing queries are kept and retried, never deleted: a temporary
+			// 403 block once wiped every query in two poll cycles.
 			if err != nil {
-				if query.FailedPreviously {
-					s.RemoveByID(query.ID, query.ChatID)
-					bot.SendMsg(query.ChatID, f("Anzeigen für %s (ID: %d) konnten nicht geladen werden. Das Problem ist erneut aufgetreten. Die Query wurde gelöscht.", query.Term, query.ID))
-				} else {
-					bot.SendMsg(query.ChatID, f("Anzeigen konnten für %s (ID: %d) nicht geladen werden. Falls das Problem weiterhin besteht, wird die Query gelöscht. Der Bot könnte überlastet sein, oder die Query enthält Fehler.", query.Term, query.ID))
-					query.FailedPreviously = true
+				if !query.FailedPreviously {
+					bot.SendMsg(query.ChatID, f("Anzeigen konnten für %s (ID: %d) nicht geladen werden. Ich versuche es weiter und melde mich, sobald es wieder klappt.", queryName(query), query.ID))
 					s.UpdateQuery(query.ID, true)
 				}
 				time.Sleep(querySpacing)
@@ -86,6 +74,7 @@ func main() {
 			}
 
 			if query.FailedPreviously {
+				bot.SendMsg(query.ChatID, f("Anzeigen für %s (ID: %d) werden wieder geladen.", queryName(query), query.ID))
 				s.UpdateQuery(query.ID, false)
 			}
 
@@ -108,4 +97,11 @@ func main() {
 
 		time.Sleep(fetchDuration)
 	}
+}
+
+func queryName(q model.Query) string {
+	if q.CustomLink != nil {
+		return *q.CustomLink
+	}
+	return q.Term
 }
